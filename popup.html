@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>OCR Form Filler</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>OCR Form Filler</h1>
+    <p class="subtitle">Image → text → form fields. Runs entirely on your device.</p>
+  </header>
+
+  <main>
+    <section id="drop-zone" class="drop-zone" tabindex="0">
+      <div id="drop-zone-empty" class="drop-zone-empty">
+        <p><strong>Drop an image</strong>, paste from clipboard (Ctrl/Cmd+V),<br />or click to browse</p>
+        <input type="file" id="file-input" accept="image/*" hidden />
+      </div>
+      <img id="preview-image" alt="Selected image preview" hidden />
+    </section>
+
+    <div class="button-row">
+      <button id="extract-btn" disabled>Extract Text</button>
+      <button id="clear-btn" type="button">Clear</button>
+    </div>
+
+    <div id="status" class="status" aria-live="polite"></div>
+    <progress id="progress-bar" max="100" value="0" hidden></progress>
+
+    <section id="results" hidden>
+      <details id="raw-text-details">
+        <summary>Raw OCR text</summary>
+        <textarea id="raw-text" rows="6" spellcheck="false"></textarea>
+      </details>
+
+      <h2>Parsed fields</h2>
+      <p class="hint">Uncheck a field to skip it, or edit the value before filling.</p>
+      <p id="items-summary" class="items-summary" hidden></p>
+      <div id="item-count-check" class="item-count-check" hidden></div>
+      <div id="fields-list" class="fields-list"></div>
+
+      <div class="button-row">
+        <button id="fill-btn" disabled>Fill Form</button>
+      </div>
+      <div id="fill-status" class="status" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <footer>
+    <p>First OCR run downloads a small language-data file (~3&nbsp;MB, cached after that). No image or text ever leaves your browser.</p>
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

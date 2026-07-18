@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "OCR Form Filler",
+  "version": "1.0.0",
+  "description": "Extract text from an image with on-device OCR and auto-fill web forms. No backend, no AI APIs — everything runs locally in the browser.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "OCR Form Filler"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
+}
