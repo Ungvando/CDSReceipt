@@ -278,6 +278,30 @@ h2 {
   }
 }
 
+.field-row.fee-row {
+  background: #e3edff;
+  border-radius: 5px;
+  padding: 4px 4px 6px;
+  margin: 0 -4px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .field-row.fee-row {
+    background: #1f3358;
+  }
+}
+
+.fee-row .field-label {
+  color: #1a4fa0;
+  font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+  .fee-row .field-label {
+    color: #7fb0ff;
+  }
+}
+
 .field-label {
   font-size: 11px;
   color: var(--text-muted);

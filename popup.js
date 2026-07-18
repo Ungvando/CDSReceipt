@@ -153,6 +153,8 @@ async function handleExtractClick() {
       ocrItemsSoldCount: rawResult.itemsSoldCount,
       matches: rawResult.itemCountCheck.matches,
       currentValue: rawResult.itemsSoldCount,
+      voidCount: rawResult.voidCount,
+      linesParsed: rawResult.linesParsed,
     };
     renderFields();
     resultsSection.hidden = false;
@@ -222,12 +224,18 @@ function buildFieldsState(rawResult) {
       const items = rawResult[desc.key] || [];
       items.forEach((item, i) => {
         const price = typeof item.costPer === "number" ? `$${item.costPer.toFixed(2)}` : "$?";
+        const label = item.isCoupon
+          ? `COUPON: Item ${i + 1}`
+          : item.isFee
+          ? `FEE: Item ${i + 1}`
+          : `Item ${i + 1}`;
         state[`${desc.key}_${i}`] = {
-          label: item.isCoupon ? `COUPON: Item ${i + 1}` : `Item ${i + 1}`,
+          label,
           value: [item.itemNumber, `qty ${item.quantity}`, price].join(ITEM_ROW_VALUE_SEP),
           include: true,
           isItemRow: true,
           isCoupon: !!item.isCoupon,
+          isFee: !!item.isFee,
         };
       });
       continue;
@@ -273,7 +281,11 @@ function renderFields() {
   for (const key of keys) {
     const field = currentFields[key];
     const row = document.createElement("div");
-    row.className = field.isCoupon ? "field-row coupon-row" : "field-row";
+    row.className = field.isCoupon
+      ? "field-row coupon-row"
+      : field.isFee
+      ? "field-row fee-row"
+      : "field-row";
 
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
@@ -306,11 +318,26 @@ function renderItemsSummary() {
   const itemFields = Object.values(currentFields).filter((f) => f.isItemRow);
   if (!itemFields.length) {
     itemsSummaryEl.hidden = true;
+    itemsSummaryEl.innerHTML = "";
     return;
   }
   const couponCount = itemFields.filter((f) => f.isCoupon).length;
-  const productCount = itemFields.length - couponCount;
-  itemsSummaryEl.textContent = `Items found: ${itemFields.length} (${productCount} product${productCount === 1 ? "" : "s"}, ${couponCount} coupon${couponCount === 1 ? "" : "s"})`;
+  const feeCount = itemFields.filter((f) => f.isFee).length;
+  const productCount = itemFields.length - couponCount - feeCount;
+
+  const lines = [
+    `Items found: ${itemFields.length} (${productCount} product${productCount === 1 ? "" : "s"}, ${couponCount} coupon${couponCount === 1 ? "" : "s"}, ${feeCount} fee${feeCount === 1 ? "" : "s"})`,
+  ];
+
+  if (itemCountState && typeof itemCountState.linesParsed === "number") {
+    lines.push(`Parsed ${itemCountState.linesParsed} line${itemCountState.linesParsed === 1 ? "" : "s"}`);
+  }
+
+  if (itemCountState && itemCountState.voidCount) {
+    lines.push(`VOID detected: ${itemCountState.voidCount} item pair${itemCountState.voidCount === 1 ? "" : "s"} removed`);
+  }
+
+  itemsSummaryEl.innerHTML = lines.map((line) => `<span>${line}</span>`).join("<br>");
   itemsSummaryEl.hidden = false;
 }
 
