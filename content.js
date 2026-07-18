@@ -15,6 +15,13 @@
 if (!window.__receiptFillerInjected) {
   window.__receiptFillerInjected = true;
 
+  // Flip to true temporarily (then reload the extension) to trace field
+  // matching/filling for a specific user's page — see findField(),
+  // fillItemRows(), getActiveModalRoot(). Warnings that flag an actual
+  // problem (no modal found, no match, fill failure) always print,
+  // regardless of this flag.
+  const DEBUG = false;
+
   // Which page-input name/id/placeholder/label/formcontrolname terms count
   // as a match for each extracted field. Edit/extend freely. subtotal/tax/
   // fileNameId match keys extractFields() returns directly in config.js;
@@ -46,7 +53,7 @@ if (!window.__receiptFillerInjected) {
     // content scripts don't have the "tabs" permission, so chrome.tabs.query
     // isn't available here — window.location.href is the reliable way to
     // confirm which page this injection actually landed on.
-    console.log(`${LOG_PREFIX} fillForm() running on:`, window.location.href);
+    if (DEBUG) console.log(`${LOG_PREFIX} fillForm() running on:`, window.location.href);
 
     if (!fields.length) return 0;
 
@@ -100,10 +107,12 @@ if (!window.__receiptFillerInjected) {
     // Print every row's values before touching the DOM, so a bad value
     // (e.g. quantity showing up as "6.00" instead of "6") can be traced
     // back to extraction (config.js) vs. the DOM-fill step below.
-    console.log(
-      `${LOG_PREFIX} fillItemRows: ${items.length} row(s) about to be filled:`,
-      items.map((it) => ({ itemNumber: it.itemNumber, quantity: it.quantity, costPer: it.costPer }))
-    );
+    if (DEBUG) {
+      console.log(
+        `${LOG_PREFIX} fillItemRows: ${items.length} row(s) about to be filled:`,
+        items.map((it) => ({ itemNumber: it.itemNumber, quantity: it.quantity, costPer: it.costPer }))
+      );
+    }
 
     let filledCount = 0;
 
@@ -128,7 +137,7 @@ if (!window.__receiptFillerInjected) {
         if (tryFill(inDomOrder[i], value, key)) {
           filledCount++;
           usedInputs.add(inDomOrder[i]);
-          console.log(`${LOG_PREFIX} fillItemRows: row ${i} "${key}" = "${value}" ->`, truncateOuterHTML(inDomOrder[i]));
+          if (DEBUG) console.log(`${LOG_PREFIX} fillItemRows: row ${i} "${key}" = "${value}" ->`, truncateOuterHTML(inDomOrder[i]));
         }
       }
     }
@@ -162,12 +171,11 @@ if (!window.__receiptFillerInjected) {
     for (const selector of candidateSelectors) {
       const el = document.querySelector(selector);
       if (el && isVisible(el)) {
-        console.log(`${LOG_PREFIX} getActiveModalRoot(): matched "${selector}"`, truncateOuterHTML(el, 150));
+        if (DEBUG) console.log(`${LOG_PREFIX} getActiveModalRoot(): matched "${selector}"`, truncateOuterHTML(el, 150));
         return el;
       }
     }
 
-    console.warn(`${LOG_PREFIX} getActiveModalRoot(): no modal container found — filling against full page, results may be wrong.`);
     return document;
   }
 
@@ -204,13 +212,15 @@ if (!window.__receiptFillerInjected) {
       return matches;
     }
 
-    const best = matches[0];
-    console.log(`${LOG_PREFIX} findField("${fieldKey}"): best match (score ${best.score})`, truncateOuterHTML(best.el));
-    if (matches.length > 1) {
-      console.log(
-        `${LOG_PREFIX} findField("${fieldKey}"): ${matches.length - 1} other candidate(s) also scored > 0:`,
-        matches.slice(1).map((m) => ({ score: m.score, el: truncateOuterHTML(m.el) }))
-      );
+    if (DEBUG) {
+      const best = matches[0];
+      console.log(`${LOG_PREFIX} findField("${fieldKey}"): best match (score ${best.score})`, truncateOuterHTML(best.el));
+      if (matches.length > 1) {
+        console.log(
+          `${LOG_PREFIX} findField("${fieldKey}"): ${matches.length - 1} other candidate(s) also scored > 0:`,
+          matches.slice(1).map((m) => ({ score: m.score, el: truncateOuterHTML(m.el) }))
+        );
+      }
     }
     return matches;
   }

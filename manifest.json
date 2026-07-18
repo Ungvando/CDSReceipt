@@ -3,12 +3,33 @@
   "name": "OCR Form Filler",
   "version": "1.0.0",
   "description": "Extract text from an image with on-device OCR and auto-fill web forms. No backend, no AI APIs — everything runs locally in the browser.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "OCR Form Filler"
+    "default_title": "OCR Form Filler",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "lib/tesseract/tesseract.min.js",
+        "lib/tesseract/worker.min.js",
+        "lib/tesseract/tesseract-core-lstm.wasm.js"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

@@ -6,6 +6,10 @@
  * the user clicks "Extract Text", so the popup itself stays tiny on open.
  */
 
+// Flip to true temporarily to trace OCR/fill flow when troubleshooting a
+// user's issue remotely. Errors (console.error below) always print.
+const DEBUG = false;
+
 const dropZone = document.getElementById("drop-zone");
 const dropZoneEmpty = document.getElementById("drop-zone-empty");
 const fileInput = document.getElementById("file-input");
