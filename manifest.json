@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "OCR Form Filler",
   "version": "1.0.0",
-  "description": "Extract text from an image with on-device OCR and auto-fill web forms. No backend, no AI APIs — everything runs locally in the browser.",
+  "description": "Scan receipts via OCR and auto-fill item numbers, quantities, and prices into your receipt entry form.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
