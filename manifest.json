@@ -27,7 +27,9 @@
       "resources": [
         "lib/tesseract/tesseract.min.js",
         "lib/tesseract/worker.min.js",
-        "lib/tesseract/tesseract-core-lstm.wasm.js"
+        "lib/tesseract/tesseract-core-lstm.wasm.js",
+        "lib/pdfjs/pdf.min.js",
+        "lib/pdfjs/pdf.worker.min.js"
       ],
       "matches": ["<all_urls>"]
     }

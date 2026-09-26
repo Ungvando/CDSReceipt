@@ -22,6 +22,7 @@ const resultsSection = document.getElementById("results");
 const rawTextEl = document.getElementById("raw-text");
 const itemsSummaryEl = document.getElementById("items-summary");
 const itemCountCheckEl = document.getElementById("item-count-check");
+const moneyCheckEl = document.getElementById("money-check");
 const fieldsListEl = document.getElementById("fields-list");
 const fillBtn = document.getElementById("fill-btn");
 const fillStatusEl = document.getElementById("fill-status");
@@ -41,7 +42,7 @@ init();
 
 function init() {
   fileInput.addEventListener("change", () => {
-    if (fileInput.files[0]) setImageFile(fileInput.files[0]);
+    if (fileInput.files[0]) handleFile(fileInput.files[0]);
   });
 
   dropZone.addEventListener("click", () => {
@@ -68,16 +69,16 @@ function init() {
     e.preventDefault();
     dropZone.classList.remove("drag-over");
     const file = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (file && file.type.startsWith("image/")) setImageFile(file);
+    if (file && isSupportedFile(file)) handleFile(file);
   });
 
   document.addEventListener("paste", (e) => {
     const items = e.clipboardData && e.clipboardData.items;
     if (!items) return;
     for (const item of items) {
-      if (item.kind === "file" && item.type.startsWith("image/")) {
+      if (item.kind === "file" && isSupportedFile(item)) {
         const file = item.getAsFile();
-        if (file) setImageFile(file);
+        if (file) handleFile(file);
         break;
       }
     }
@@ -88,6 +89,23 @@ function init() {
   fillBtn.addEventListener("click", handleFillClick);
 
   restoreLastResult();
+}
+
+// Accepts DataTransferItem (paste) or File (drop/browse) — both expose `.type`.
+function isSupportedFile(fileOrItem) {
+  return fileOrItem.type.startsWith("image/") || fileOrItem.type === "application/pdf";
+}
+
+function isPdfFile(file) {
+  return file.type === "application/pdf" || /\.pdf$/i.test(file.name || "");
+}
+
+function handleFile(file) {
+  if (isPdfFile(file)) {
+    setPdfFile(file);
+  } else if (file.type.startsWith("image/")) {
+    setImageFile(file);
+  }
 }
 
 function setImageFile(file) {
@@ -104,6 +122,27 @@ function setImageFile(file) {
   };
   reader.onerror = () => setStatus("Could not read that image file.", true);
   reader.readAsDataURL(file);
+}
+
+// PDFs are rendered to a canvas (page 1, scale 3 for OCR-friendly resolution)
+// and converted to a PNG data URL, then handled identically to an uploaded
+// image from that point on (same preview <img>, same Tesseract input).
+async function setPdfFile(file) {
+  currentFileNameId = stripExtension(file.name);
+  setStatus("Rendering PDF…");
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const dataUrl = await renderPdfToImageDataUrl(arrayBuffer);
+    currentImageDataUrl = dataUrl;
+    previewImage.src = dataUrl;
+    previewImage.hidden = false;
+    dropZoneEmpty.hidden = true;
+    extractBtn.disabled = false;
+    setStatus("");
+  } catch (err) {
+    console.error(err);
+    setStatus(`Could not read that PDF: ${err.message || err}`, true);
+  }
 }
 
 // "32660G.jpg" -> "32660G". Pasted-from-clipboard images often have no
@@ -212,6 +251,39 @@ async function runOCR(imageDataUrl, onProgress) {
   return data.text;
 }
 
+// ---- PDF rendering (pdf.js, loaded lazily) --------------------------------
+
+function loadPdfJsScript() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = chrome.runtime.getURL("lib/pdfjs/pdf.min.js");
+    script.onload = () => resolve(window.pdfjsLib);
+    script.onerror = () => reject(new Error("Failed to load PDF engine"));
+    document.head.appendChild(script);
+  });
+}
+
+// Renders page 1 at scale 3 (a good balance of OCR-friendly resolution vs.
+// canvas size) and returns it as a PNG data URL, so the rest of the pipeline
+// (preview <img>, Tesseract) never has to know the source was a PDF.
+async function renderPdfToImageDataUrl(arrayBuffer) {
+  const pdfjsLib = await loadPdfJsScript();
+  pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("lib/pdfjs/pdf.worker.min.js");
+
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const page = await pdf.getPage(1);
+  const viewport = page.getViewport({ scale: 3 });
+
+  const canvas = document.createElement("canvas");
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  const context = canvas.getContext("2d");
+
+  await page.render({ canvasContext: context, viewport }).promise;
+  return canvas.toDataURL("image/png");
+}
+
 // ---- Field extraction (Costco rules live in config.js) --------------------
 
 // Wraps config.js's fixed-shape { subtotal, tax, items } result into the
@@ -228,18 +300,41 @@ function buildFieldsState(rawResult) {
       const items = rawResult[desc.key] || [];
       items.forEach((item, i) => {
         const price = typeof item.costPer === "number" ? `$${item.costPer.toFixed(2)}` : "$?";
-        const label = item.isCoupon
-          ? `COUPON: Item ${i + 1}`
-          : item.isFee
-          ? `FEE: Item ${i + 1}`
-          : `Item ${i + 1}`;
+        const label = item.isFee ? `FEE: Item ${i + 1}` : `Item ${i + 1}`;
         state[`${desc.key}_${i}`] = {
           label,
           value: [item.itemNumber, `qty ${item.quantity}`, price].join(ITEM_ROW_VALUE_SEP),
           include: true,
           isItemRow: true,
-          isCoupon: !!item.isCoupon,
+          isCoupon: false,
           isFee: !!item.isFee,
+        };
+
+        // Coupons are rendered as sub-rows directly under the item they
+        // discount (object key order = insertion order, so this places
+        // them right after their parent in renderFields()).
+        (item.coupons || []).forEach((coupon, j) => {
+          const couponPrice = typeof coupon.costPer === "number" ? `$${coupon.costPer.toFixed(2)}` : "$?";
+          state[`${desc.key}_${i}_coupon_${j}`] = {
+            label: `↳ Coupon for Item ${i + 1}`,
+            value: [coupon.itemNumber, `qty ${coupon.quantity}`, couponPrice].join(ITEM_ROW_VALUE_SEP),
+            include: true,
+            isItemRow: true,
+            isCoupon: true,
+            isFee: false,
+          };
+        });
+      });
+
+      (rawResult.orphanCoupons || []).forEach((coupon, k) => {
+        const couponPrice = typeof coupon.costPer === "number" ? `$${coupon.costPer.toFixed(2)}` : "$?";
+        state[`orphanCoupon_${k}`] = {
+          label: "COUPON (item not found)",
+          value: [coupon.itemNumber, `qty ${coupon.quantity}`, couponPrice].join(ITEM_ROW_VALUE_SEP),
+          include: true,
+          isItemRow: true,
+          isCoupon: true,
+          isFee: false,
         };
       });
       continue;
@@ -281,6 +376,7 @@ function renderFields() {
 
   renderItemsSummary();
   renderItemCountCheck();
+  renderMoneyCheck();
 
   for (const key of keys) {
     const field = currentFields[key];
@@ -309,6 +405,7 @@ function renderFields() {
     valueInput.value = field.value;
     valueInput.addEventListener("input", () => {
       currentFields[key].value = valueInput.value;
+      if (key === "subtotal") updateMoneyCheckBanner();
     });
 
     row.append(checkbox, label, valueInput);
@@ -389,27 +486,65 @@ function renderItemCountCheck() {
     itemCountCheckEl.appendChild(row);
   }
 
-  const statusLine = document.createElement("p");
-  statusLine.id = "item-count-status";
-  itemCountCheckEl.appendChild(statusLine);
+  const banner = document.createElement("div");
+  banner.id = "item-count-banner";
+  itemCountCheckEl.appendChild(banner);
   updateItemCountStatusLine();
 }
 
 function updateItemCountStatusLine() {
-  const statusLine = document.getElementById("item-count-status");
-  if (!statusLine || !itemCountState) return;
+  const banner = document.getElementById("item-count-banner");
+  if (!banner || !itemCountState) return;
 
   const result = window.validateItemCount(itemCountState.items, itemCountState.currentValue);
 
   if (result.matches === true) {
-    statusLine.textContent = `✓ Items Sold: ${itemCountState.currentValue} matches counted quantity (${result.countedQty})`;
-    statusLine.className = "item-count-status match";
+    banner.className = "check-banner ok";
+    banner.textContent = `${result.countedQty} / ${itemCountState.currentValue} items ✓`;
   } else if (result.matches === false) {
-    statusLine.textContent = `⚠ Items Sold says ${itemCountState.currentValue} but counted quantity is ${result.countedQty} — check items before filling`;
-    statusLine.className = "item-count-status mismatch";
+    const diff = itemCountState.currentValue - result.countedQty;
+    banner.className = "check-banner mismatch";
+    banner.textContent = `Please review — Items Sold says ${itemCountState.currentValue}, counted ${result.countedQty} (difference ${diff > 0 ? "+" : ""}${diff})`;
   } else {
-    statusLine.textContent = `Enter a count to compare against counted quantity (${result.countedQty}).`;
-    statusLine.className = "item-count-status neutral";
+    banner.className = "check-banner neutral";
+    banner.textContent = `Enter a count to compare against counted quantity (${result.countedQty}).`;
+  }
+}
+
+// Cross-checks item totals minus coupons against the receipt's own printed
+// SUBTOTAL. Re-runs live when the user edits the subtotal field (see the
+// "input" listener in renderFields()), since editing it should immediately
+// reflect in the banner rather than only at the moment of extraction.
+function renderMoneyCheck() {
+  moneyCheckEl.innerHTML = "";
+  if (!itemCountState) {
+    moneyCheckEl.hidden = true;
+    return;
+  }
+  moneyCheckEl.hidden = false;
+
+  const banner = document.createElement("div");
+  banner.id = "money-check-banner";
+  moneyCheckEl.appendChild(banner);
+  updateMoneyCheckBanner();
+}
+
+function updateMoneyCheckBanner() {
+  const banner = document.getElementById("money-check-banner");
+  if (!banner || !itemCountState) return;
+
+  const subtotalField = currentFields.subtotal;
+  const result = window.validateMoneyCheck(itemCountState.items, subtotalField ? subtotalField.value : null);
+
+  if (result.matches === true) {
+    banner.className = "check-banner ok";
+    banner.textContent = `$${result.expected.toFixed(2)} / $${result.subtotal.toFixed(2)} subtotal ✓`;
+  } else if (result.matches === false) {
+    banner.className = "check-banner mismatch";
+    banner.textContent = `Please review — items $${result.itemsTotal.toFixed(2)} − coupons $${result.couponsTotal.toFixed(2)} = $${result.expected.toFixed(2)}, but SUBTOTAL says $${result.subtotal.toFixed(2)} (difference $${result.difference.toFixed(2)})`;
+  } else {
+    banner.className = "check-banner neutral";
+    banner.textContent = `No subtotal found to check against (items − coupons = $${result.expected.toFixed(2)}).`;
   }
 }
 
@@ -492,6 +627,8 @@ function resetAll() {
   itemsSummaryEl.hidden = true;
   itemCountCheckEl.hidden = true;
   itemCountCheckEl.innerHTML = "";
+  moneyCheckEl.hidden = true;
+  moneyCheckEl.innerHTML = "";
   setStatus("");
   setFillStatus("");
   progressBar.hidden = true;

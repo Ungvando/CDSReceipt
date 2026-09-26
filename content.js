@@ -35,6 +35,7 @@ if (!window.__receiptFillerInjected) {
     subtotal: ["subtotal", "sub_total", "sub-total"],
     tax: ["tax"],
     fileNameId: ["receipt_number", "receiptnumber", "receipt#", "receiptno"],
+    appNumber: ["app", "appnumber", "approval", "approvalcode", "authcode", "auth"],
     itemNumber: ["item_number", "itemnumber", "sku"],
     quantity: ["units", "unitslbs", "units_lbs", "qty", "quantity"],
     costPer: ["cost", "costper", "cost_per", "price_per", "unitcost"],

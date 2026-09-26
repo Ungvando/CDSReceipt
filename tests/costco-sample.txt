@@ -1,0 +1,47 @@
+COSTCO WHOLESALE
+Warehouse #542
+1234 MARKET ST
+SAN FRANCISCO CA 94103
+(415) 555-0142
+
+SELF-CHECKOUT
+MEMBER 111222333444
+
+3 @ 26.49
+E 2037470 KS ORG SPINACH             79.47 A
+4 @ 19.99
+E 1780981 ORG STRAWBERRY             79.96 A
+4 @ 27.99
+E 2027490 KS BATH TISSUE            111.96 A
+E 0000392110 /2027490                24.00-
+2 @ 12.69
+E 1116038 KS PAPER TOWEL             25.38 A
+2 @ 9.49
+26584 BANANAS                        18.98
+8 @ 5.69
+E 2024274 KS COLD BREW               45.52 A
+6 @ 15.29
+E 1578129 ORG EGGS                   91.74
+12 @ 5.89
+E 2041812 KS WATER 40CT              70.68 A
+6 @ 4.79
+E 2070434 AVOCADO 6CT                28.74
+E 1927215 KS OLIVE OIL               19.99 A
+10 @ 9.99
+E 2102368 KS ALMONDS                 99.90 A
+4 @ 34.99
+E 1403469 TIDE PODS                 139.96 A
+E 0000389563 /1403469                28.00-
+
+A 10.500% TOTAL TAX                  10.49
+SUBTOTAL                            760.28
+TAX                                   10.49
+****** TOTAL                        770.77
+
+XXXXXXXXXXXX4242
+AMEX TEND                           770.77
+
+APP #: 91660G          SEQ#: 000123
+TOTAL NUMBER OF ITEMS SOLD = 62
+
+09/25/26   14:32          1234 5678 1122 334455

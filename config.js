@@ -10,20 +10,27 @@
 // "SUBTOTAL 1,322.24" (optional thousands comma).
 const SUBTOTAL_PATTERN = /SUBTOTAL\s+(\d{1,3}(?:,\d{3})*\.\d{2})/i;
 
-// Line must START with "TAX" (so "TOTAL TAX" / mid-line "TAX" mentions don't match).
+// Line must START with "TAX" (so "TOTAL TAX" / a tax-rate breakdown line
+// like "A 10.500% TOTAL TAX 10.49" don't match — only the standalone
+// "TAX 10.49" line does).
 const TAX_PATTERN = /^\s*TAX\s+(\d+\.\d{2})/im;
 
+// "App#: 91660G" (credit card approval code). Tolerant of OCR variants:
+// "App# :", "Rpp#" (A misread as R), "APP #" (space before "#").
+const APP_NUMBER_PATTERN = /[AR]pp\s*#\s*:?\s*([A-Z0-9]{4,10})/i;
+
 /**
- * Item lines look like "E 1234567 ITEM NAME 12.99" ("E" is optional). A
- * quantity line sometimes appears directly above one, e.g. "2 @ 3.25",
- * meaning the item below was bought 2x at $3.25 each — costPer is derived
- * from totalPrice / quantity rather than trusting the unit price OCR'd
- * off that line directly. A single item with no preceding qty line
- * defaults to quantity 1.
+ * Item lines look like "E 1234567 ITEM NAME 12.99" ("E" is optional, and
+ * does NOT decide quantity — it's just a tax-category marker Costco prints
+ * on some lines). A quantity line sometimes appears directly above one,
+ * e.g. "2 @ 3.25", meaning the item/coupon below was bought 2x at $3.25
+ * each. A line with no preceding qty line defaults to quantity 1 with the
+ * unit price equal to the line's total.
  *
- * Coupon/discount lines ("E 0000123456/1234567 ITEM NAME 19.00-") are kept
- * as their own row, tagged isCoupon: true, with the discount amount as
- * both costPer and totalPrice, rather than being dropped.
+ * Coupon lines ("E 0000123456 /1234567 19.00-") reference another item's
+ * number rather than being an item themselves — they're attached to that
+ * item as a discount (see extractItemsWithQuantities) and excluded from
+ * the items array entirely, so they never count toward item-count checks.
  *
  * Item numbers are extracted by grabbing the last 6-7 digits of a 5+ digit
  * run rather than front-anchoring — Costco item numbers are always max 7
@@ -58,12 +65,23 @@ function extractDiscountItemNumber(line) {
   return candidate.length > 7 ? candidate.slice(-7) : candidate;
 }
 
+// A coupon line is "E 0000xxxxxx /ITEMNUMBER amount-": an optional "E",
+// then a discount code starting with "0000", then (loosely) a slash and
+// the item number it discounts, then the amount with a trailing "-".
+// Both halves are checked independently (rather than one combined regex)
+// so OCR noise in the middle — a garbled/missing "/" — doesn't stop the
+// line from being recognized as a coupon at all.
+const COUPON_PREFIX_PATTERN = /^E?\s*0000\d{2,}/i;
+const TRAILING_DISCOUNT_PATTERN = /(\d+\.\d{2})\s*-\s*$/;
+
+function isCouponLine(line) {
+  return COUPON_PREFIX_PATTERN.test(line) && TRAILING_DISCOUNT_PATTERN.test(line);
+}
+
 // CA REDEMP (container/deposit fee) lines print a placeholder item number
 // like "2500000000" that isn't a real product/coupon reference — it's just
-// padding. That fake number happens to contain "0000", so it would
-// otherwise get misclassified as a coupon by the isDiscount check. OCR
-// sometimes garbles "REDEMP" itself, so the label match is loose; the
-// digit-run fallback catches cases where even that garbles away.
+// padding. OCR sometimes garbles "REDEMP" itself, so the label match is
+// loose; the digit-run fallback catches cases where even that garbles away.
 const CA_REDEMP_PATTERN = /CA\s*REDE/i;
 
 function isFeeLine(line) {
@@ -74,71 +92,29 @@ function isFeeLine(line) {
 
 // The separator between qty and unit price is nominally "@", but OCR reads
 // it as all sorts of things depending on font/scan quality — seen in the
-// wild: 8, B, b, Q, €. Worse, spaces sometimes collapse entirely, making a
-// single greedy regex ambiguous: "5812.79" could be qty 58 + price 12.79 OR
-// qty 5 + "8"(misread @) + 12.79, and "484.79" could be a stray
-// running-total artifact or qty 4 @ 4.79. Rather than committing to one
-// parse, every structurally plausible (qty, unitPrice) reading is collected
-// and the winner is chosen later against the item line's total price —
-// which is always available from the line below — via qty × unit ≈ total.
-// A stray artifact line simply produces candidates that fail the math and
-// gets ignored, so no anchoring tricks are needed to reject it up front.
-const QTY_CANDIDATE_REGEXES = [
-  /^(\d)\s*[@8BbQ€]\s+(\d{1,3}\.\d{1,2})\b/,   // 1-digit qty, spaced sep
-  /^(\d{2})\s*[@8BbQ€]\s+(\d{1,3}\.\d{1,2})\b/, // 2-digit qty, spaced sep
-  /^(\d)[@8BbQ€](\d{1,3}\.\d{1,2})\b/,          // collapsed, 1-digit qty + sep
-  /^(\d{2})[@8BbQ€](\d{1,3}\.\d{1,2})\b/,       // collapsed, 2-digit qty + sep
-  /^(\d)(\d{1,3}\.\d{1,2})\b/,                  // sep dropped, 1-digit qty
-  /^(\d{2})(\d{1,3}\.\d{1,2})\b/                // sep dropped, 2-digit qty
-];
-
-function buildQtyCandidates(line) {
-  const candidates = [];
-  const seen = new Set();
-  for (const regex of QTY_CANDIDATE_REGEXES) {
-    const m = line.match(regex);
-    if (!m) continue;
-    const qty = parseInt(m[1], 10);
-    const price = parseFloat(m[2]);
-    if (!qty || !price) continue;
-    const key = qty + '|' + price;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    candidates.push({ qty, price, priceStr: m[2] });
-  }
-  return candidates.length ? candidates : null;
-}
-
-// Picks the candidate whose qty × unitPrice matches the item's total.
-// Exact check first; then two OCR-tolerant checks against the true unit
-// (totalPrice / qty, formatted to 2 decimals):
-//   - prefix: OCR dropped the final decimal digit ("39.9" printed for 39.99)
-//   - last-digit misread: OCR garbled only the final digit ("13.45" printed
-//     for 13.49) — same length, all but the last character agree
-// Returns null if nothing passes.
-function resolveQtyCandidates(candidates, totalPrice) {
-  const exact = candidates.filter(c => Math.abs(c.qty * c.price - totalPrice) < 0.02);
-  if (exact.length) return exact[0].qty;
-
-  const tolerant = candidates.filter(c => {
-    const unit = (totalPrice / c.qty).toFixed(2);
-    // Strip a leading zero OCR sometimes glues on (e.g. "013.45")
-    const ocr = c.priceStr.replace(/^0(?=\d)/, '');
-    if (unit.startsWith(ocr)) return true;
-    return ocr.length === unit.length && ocr.slice(0, -1) === unit.slice(0, -1);
-  });
-  if (tolerant.length) return tolerant[0].qty;
-
-  return null;
-}
+// wild: 8, B, e, Q, €.
+const QTY_LINE_PATTERN = /^(\d{1,2})\s*[@8BeQ€]\s*(\d{1,3}\.\d{2})\b/;
 
 function extractItemsWithQuantities(ocrText) {
   const lines = ocrText.split('\n').map(l => l.trim()).filter(Boolean);
   const items = [];
-  let pendingQtyCandidates = null;
-  let pendingQtyRawLine = null;
+  const orphanCoupons = []; // coupons whose referenced item number wasn't found
+  let pendingQty = null; // { qty, unitPrice } from a "N @ price" line, applies to the next item/coupon line
   let skipNextItemLine = false;
   let voidCount = 0;
+
+  // Attaches to the most recently seen item with a matching number (coupons
+  // normally follow the item they discount, so scanning from the end finds
+  // the right one even if the same item number appears more than once).
+  function attachCoupon(targetItemNumber, coupon) {
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].itemNumber === targetItemNumber) {
+        items[i].coupons.push(coupon);
+        return;
+      }
+    }
+    orphanCoupons.push(coupon);
+  }
 
   for (const line of lines) {
     // VOID reverses the item printed directly above it, and is immediately
@@ -148,20 +124,37 @@ function extractItemsWithQuantities(ocrText) {
       items.pop();
       skipNextItemLine = true;
       voidCount++;
-      pendingQtyCandidates = null;
-      pendingQtyRawLine = null;
+      pendingQty = null;
       continue;
     }
 
-    const qtyCandidates = buildQtyCandidates(line);
-    if (qtyCandidates) {
-      pendingQtyCandidates = qtyCandidates;
-      pendingQtyRawLine = line;
+    const qtyMatch = line.match(QTY_LINE_PATTERN);
+    if (qtyMatch) {
+      pendingQty = { qty: parseInt(qtyMatch[1], 10), unitPrice: parseFloat(qtyMatch[2]) };
+      continue;
+    }
+
+    if (isCouponLine(line)) {
+      const targetItemNumber = extractDiscountItemNumber(line);
+      const amountMatch = line.match(TRAILING_DISCOUNT_PATTERN);
+      if (!targetItemNumber || !amountMatch) {
+        pendingQty = null;
+        continue;
+      }
+      const totalPrice = parseFloat(amountMatch[1]);
+      const quantity = pendingQty ? pendingQty.qty : 1;
+      const costPer = pendingQty ? pendingQty.unitPrice : totalPrice;
+      attachCoupon(targetItemNumber, {
+        itemNumber: targetItemNumber,
+        quantity,
+        costPer,
+        totalPrice,
+      });
+      pendingQty = null;
       continue;
     }
 
     const isFee = isFeeLine(line);
-    const isDiscount = !isFee && /0000\d*/.test(line);
     const priceMatch = line.match(/(\d+\.\d{2})\s*(-)?\s*A?$/);
     if (!priceMatch) continue;
 
@@ -169,26 +162,21 @@ function extractItemsWithQuantities(ocrText) {
     if (isFee) {
       // The item number printed on a fee line is a placeholder, not a real
       // reference — inherit the item it belongs to from whatever was
-      // pushed last (a coupon row already stores the real referenced item
-      // number, so no extra lookup is needed there).
+      // pushed last.
       const lastEntry = items[items.length - 1];
       itemNumber = lastEntry ? lastEntry.itemNumber : null;
-    } else if (isDiscount) {
-      itemNumber = extractDiscountItemNumber(line);
     } else {
       itemNumber = extractItemNumberFromLine(line);
     }
 
     if (!itemNumber) {
-      pendingQtyCandidates = null;
-      pendingQtyRawLine = null;
+      pendingQty = null;
       continue;
     }
 
     if (skipNextItemLine) {
       skipNextItemLine = false;
-      pendingQtyCandidates = null;
-      pendingQtyRawLine = null;
+      pendingQty = null;
       continue;
     }
 
@@ -203,43 +191,34 @@ function extractItemsWithQuantities(ocrText) {
     // "VOID" text is exactly the kind of scan quality that also does this)
     // can make the two lines' item numbers disagree even though they're
     // the same physical line item.
-    if (!isFee && !isDiscount && isReversal) {
+    if (!isFee && isReversal) {
       const lastEntry = items[items.length - 1];
-      if (lastEntry && !lastEntry.isCoupon && !lastEntry.isFee && lastEntry.totalPrice === totalPrice) {
+      if (lastEntry && !lastEntry.isFee && lastEntry.totalPrice === totalPrice) {
         items.pop();
         voidCount++;
-        pendingQtyCandidates = null;
-        pendingQtyRawLine = null;
+        pendingQty = null;
         continue;
       }
     }
 
-    let qty = 1;
-    if (pendingQtyCandidates) {
-      const resolved = resolveQtyCandidates(pendingQtyCandidates, totalPrice);
-      if (resolved) {
-        qty = resolved;
-      } else {
-        console.warn(
-          `OCR Form Filler: no qty candidate matched — qty line "${pendingQtyRawLine}", item line "${line}"; defaulting to qty 1`
-        );
-      }
-    }
-    const costPer = +(totalPrice / qty).toFixed(2);
+    // If a quantity line came right before this one, qty = N and unit
+    // price = that line's price. Otherwise qty = 1 and unit price = total.
+    // The "E" prefix plays no part in this decision.
+    const quantity = pendingQty ? pendingQty.qty : 1;
+    const costPer = pendingQty ? pendingQty.unitPrice : totalPrice;
 
     items.push({
       itemNumber,
-      quantity: qty,
+      quantity,
       costPer,
       totalPrice,
-      isCoupon: isDiscount,
-      isFee: isFee
+      isFee,
+      coupons: [],
     });
-    pendingQtyCandidates = null;
-    pendingQtyRawLine = null;
+    pendingQty = null;
   }
 
-  return { items, voidCount, linesParsed: lines.length };
+  return { items, orphanCoupons, voidCount, linesParsed: lines.length };
 }
 
 // Costco receipts print a self-reported total unit count in the footer,
@@ -261,16 +240,52 @@ function extractItemsSoldCount(ocrText) {
   return null; // not found — user will need to enter manually
 }
 
+// Coupons are never in `items` (they live in item.coupons), so this only
+// needs to exclude fee/CRV lines from the quantity sum.
 function validateItemCount(items, ocrItemsSoldCount) {
   const countedQty = items
-    .filter(item => !item.isCoupon && !item.isFee)
+    .filter(item => !item.isFee)
     .reduce((sum, item) => sum + item.quantity, 0);
 
   return {
     countedQty,
     ocrItemsSoldCount,
     matches: ocrItemsSoldCount !== null ? countedQty === ocrItemsSoldCount : null,
-    needsManualInput: ocrItemsSoldCount === null
+    needsManualInput: ocrItemsSoldCount === null,
+  };
+}
+
+// Sum of item totals minus coupon amounts should equal the receipt's
+// printed SUBTOTAL — a cross-check independent of the item-count check,
+// catching cases where a line was misparsed but the count still happened
+// to line up (or vice versa).
+function validateMoneyCheck(items, subtotal) {
+  const subtotalNum = subtotal === null || subtotal === undefined || subtotal === "" ? null : parseFloat(subtotal);
+
+  let itemsTotal = 0;
+  let couponsTotal = 0;
+  for (const item of items) {
+    itemsTotal += item.totalPrice;
+    for (const coupon of item.coupons || []) {
+      couponsTotal += coupon.totalPrice;
+    }
+  }
+  itemsTotal = +itemsTotal.toFixed(2);
+  couponsTotal = +couponsTotal.toFixed(2);
+  const expected = +(itemsTotal - couponsTotal).toFixed(2);
+
+  if (subtotalNum === null || Number.isNaN(subtotalNum)) {
+    return { itemsTotal, couponsTotal, expected, subtotal: null, difference: null, matches: null };
+  }
+
+  const difference = +(expected - subtotalNum).toFixed(2);
+  return {
+    itemsTotal,
+    couponsTotal,
+    expected,
+    subtotal: subtotalNum,
+    difference,
+    matches: Math.abs(difference) < 0.02,
   };
 }
 
@@ -279,15 +294,20 @@ function extractFields(ocrText) {
 
   const subtotalMatch = text.match(SUBTOTAL_PATTERN);
   const taxMatch = text.match(TAX_PATTERN);
-  const { items, voidCount, linesParsed } = extractItemsWithQuantities(text);
+  const appNumberMatch = text.match(APP_NUMBER_PATTERN);
+  const { items, orphanCoupons, voidCount, linesParsed } = extractItemsWithQuantities(text);
   const itemsSoldCount = extractItemsSoldCount(text);
+  const subtotal = subtotalMatch ? subtotalMatch[1].replace(/,/g, "") : null;
 
   return {
-    subtotal: subtotalMatch ? subtotalMatch[1].replace(/,/g, "") : null,
+    subtotal,
     tax: taxMatch ? taxMatch[1] : null,
+    appNumber: appNumberMatch ? appNumberMatch[1] : null,
     items,
+    orphanCoupons,
     itemsSoldCount,
     itemCountCheck: validateItemCount(items, itemsSoldCount),
+    moneyCheck: validateMoneyCheck(items, subtotal),
     voidCount,
     linesParsed,
   };
@@ -295,10 +315,11 @@ function extractFields(ocrText) {
 
 // Drives popup.js's preview UI: order, labels, and field shape.
 // isItemsTable fields hold an array of { itemNumber, quantity, costPer,
-// totalPrice } objects rather than a single value.
+// totalPrice, coupons } objects rather than a single value.
 const FIELD_DESCRIPTORS = [
   { key: "subtotal", label: "Subtotal", isList: false },
   { key: "tax", label: "Tax", isList: false },
+  { key: "appNumber", label: "App #", isList: false },
   { key: "items", label: "Items", isItemsTable: true },
 ];
 
@@ -306,4 +327,11 @@ if (typeof window !== "undefined") {
   window.extractFields = extractFields;
   window.FIELD_DESCRIPTORS = FIELD_DESCRIPTORS;
   window.validateItemCount = validateItemCount;
+  window.validateMoneyCheck = validateMoneyCheck;
+}
+
+// Node (tests) doesn't define `window` — export the same surface via
+// CommonJS so tests/parse.test.js can `require()` this file directly.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { extractFields, FIELD_DESCRIPTORS, validateItemCount, validateMoneyCheck };
 }

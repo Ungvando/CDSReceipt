@@ -204,22 +204,31 @@ h2 {
   font-size: 12px;
 }
 
-.item-count-status {
-  margin: 0;
-  font-size: 11.5px;
-  font-weight: 600;
+.money-check {
+  margin: 0 0 10px;
 }
 
-.item-count-status.match {
+.check-banner {
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.check-banner.ok {
+  background: #e6f7ec;
   color: #1a7d3a;
 }
 
-.item-count-status.mismatch {
+.check-banner.mismatch {
+  background: #fdeaea;
   color: #b02a2a;
 }
 
-.item-count-status.neutral {
-  color: var(--text-muted);
+.check-banner.neutral {
+  background: #fff8e1;
+  color: #8a6d00;
   font-weight: 400;
 }
 
@@ -229,11 +238,17 @@ h2 {
     border-color: #45474c;
     color: inherit;
   }
-  .item-count-status.match {
+  .check-banner.ok {
+    background: #123a20;
     color: #4fd17a;
   }
-  .item-count-status.mismatch {
+  .check-banner.mismatch {
+    background: #4a1f1f;
     color: #ff6b6b;
+  }
+  .check-banner.neutral {
+    background: #4a3f10;
+    color: #e0c34a;
   }
 }
 

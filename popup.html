@@ -8,14 +8,14 @@
 <body>
   <header class="app-header">
     <h1>OCR Form Filler</h1>
-    <p class="subtitle">Image → text → form fields. Runs entirely on your device.</p>
+    <p class="subtitle">Image/PDF → text → form fields. Runs entirely on your device.</p>
   </header>
 
   <main>
     <section id="drop-zone" class="drop-zone" tabindex="0">
       <div id="drop-zone-empty" class="drop-zone-empty">
-        <p><strong>Drop an image</strong>, paste from clipboard (Ctrl/Cmd+V),<br />or click to browse</p>
-        <input type="file" id="file-input" accept="image/*" hidden />
+        <p><strong>Drop an image or PDF</strong>, paste from clipboard (Ctrl/Cmd+V),<br />or click to browse</p>
+        <input type="file" id="file-input" accept="image/*,application/pdf,.pdf" hidden />
       </div>
       <img id="preview-image" alt="Selected image preview" hidden />
     </section>
@@ -38,6 +38,7 @@
       <p class="hint">Uncheck a field to skip it, or edit the value before filling.</p>
       <p id="items-summary" class="items-summary" hidden></p>
       <div id="item-count-check" class="item-count-check" hidden></div>
+      <div id="money-check" class="money-check" hidden></div>
       <div id="fields-list" class="fields-list"></div>
 
       <div class="button-row">
@@ -48,7 +49,7 @@
   </main>
 
   <footer>
-    <p>First OCR run downloads a small language-data file (~3&nbsp;MB, cached after that). No image or text ever leaves your browser.</p>
+    <p>First OCR run downloads a small language-data file (~3&nbsp;MB, cached after that). No image, PDF, or text ever leaves your browser.</p>
   </footer>
 
   <script src="config.js"></script>
